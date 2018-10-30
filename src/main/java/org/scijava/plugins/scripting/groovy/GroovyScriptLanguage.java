@@ -32,13 +32,13 @@ package org.scijava.plugins.scripting.groovy;
 
 import groovy.lang.GroovySystem;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
 import javax.script.ScriptEngine;
 
 import org.scijava.Priority;
+import org.scijava.command.CommandService;
+import org.scijava.module.ModuleService;
 import org.scijava.plugin.Plugin;
 import org.scijava.script.AbstractScriptLanguage;
 import org.scijava.script.ScriptLanguage;
@@ -56,6 +56,8 @@ import org.scijava.script.ScriptLanguage;
 public class GroovyScriptLanguage extends AbstractScriptLanguage {
 
 	private static String VERSION = "1.5.6";
+
+	private Map<Class, String> parameters = new HashMap<>();
 
 	// -- ScriptEngineFactory methods --
 
@@ -177,6 +179,74 @@ public class GroovyScriptLanguage extends AbstractScriptLanguage {
 			ret.append('\n');
 		}
 		return ret.toString();
+	}
+
+
+	@Override
+	public void registerParameter(Class objectClass, String objectVariableName) {
+		if(!parameters.containsKey(objectClass)) parameters.put(objectClass, objectVariableName);
+	}
+
+	@Override
+	public String encodeParameter(Class objectClass) {
+		return "// @" + objectClass.getSimpleName() + " " + getScriptParameter(objectClass);
+	}
+
+	private String getScriptParameter(Class objectClass) {
+		if(!parameters.containsKey(objectClass)) throw new NullPointerException("Parameter of type " + objectClass + " not known to language. Use registerParameter() first.");
+		return parameters.get(objectClass);
+	}
+
+	@Override
+	public String encodeUnknownVariable(final String variable)
+	{
+		return variable + " = ?";
+	}
+
+	@Override
+	public String encodeVariableFromService(String variableName, String serviceVariableName, final String serviceMethodName)
+	{
+		return variableName + " = " + serviceVariableName + "." + serviceMethodName + "()";
+	}
+
+	@Override
+	public String encodeModuleCall(final String moduleName, boolean process, Map<String, Object> inputs, Map<String, String> outputs, Map<Object, String> variables)
+	{
+		String res = "";
+		if(outputs.size() == 1) {
+			res += outputs.keySet().toArray()[0] + " = ";
+		}
+		if(outputs.size() > 1) {
+			res += "modfuture = ";
+		}
+		res += encodeCommandRun(moduleName, process, inputs);
+		if(outputs.size() == 1) {
+			res += ".get().getOutput(\"" + outputs.values().toArray()[0] + "\")";
+		}
+		res += encodeOutputVariables(outputs);
+		return res;
+	}
+
+	private String encodeCommandRun(String command, boolean process, Map<String, Object> inputs) {
+		String res = getScriptParameter(CommandService.class) + ".run(\"" + command + "\", ";
+		res += process ? "True" : "False";
+		if(inputs != null) {
+			for (Map.Entry<String,Object> entry : inputs.entrySet()) {
+				res += ", \"" + entry.getKey() + "\", " + entry.getValue();
+			}
+		}
+		res += ")";
+		return res;
+	}
+
+	private String encodeOutputVariables(Map<String, String> outputs) {
+		if(outputs.size() < 2) return "";
+		String res = "";
+		res += "\nmodres = " + getScriptParameter(ModuleService.class) + ".waitFor(modfuture)";
+		for (Map.Entry<String,String> entry : outputs.entrySet()) {
+			res += "\n" + entry.getKey() + " = modres.getOutput(\"" + entry.getValue() + "\")";
+		}
+		return res;
 	}
 
 	private static List<String> names;
